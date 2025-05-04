@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🌎 Live GPS Tracker with Map</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    button { margin: 5px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    canvas { margin-bottom: 30px; }
+    #map { height: 300px; margin-bottom: 30px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background-color: #f2f2f2; }
+    #controls { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <h1>🌟 Real-Time GPS Tracker with Speed Graph + Map</h1>
+  <p id="status">Waiting for location permission...</p>
+
+  <div id="controls">
+    <button onclick="startTracking()">Start Tracking</button>
+    <button onclick="stopTracking()">Stop Tracking</button>
+    <button onclick="downloadCSV()">Download CSV</button>
+  </div>
+
+  <canvas id="speedChart" width="400" height="200"></canvas>
+
+  <div id="map"></div>
+
+  <table id="gpsTable">
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Latitude</th>
+        <th>Longitude</th>
+        <th>Speed (m/s)</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const tableBody = document.getElementById('gpsTable').querySelector('tbody');
+    const ctx = document.getElementById('speedChart').getContext('2d');
+
+    let lastLat = null, lastLon = null, lastTime = null;
+    let watchID = null;
+    let map, marker; // map and marker for Leaflet
+
+    const speedData = {
+      labels: [],
+      datasets: [{
+        label: 'Speed (m/s)',
+        data: [],
+        borderColor: 'blue',
+        backgroundColor: 'lightblue',
+        tension: 0.4,
+        fill: true
+      }]
+    };
+
+    const speedChart = new Chart(ctx, {
+      type: 'line',
+      data: speedData,
+      options: {
+        responsive: true,
+        scales: {
+          x: { title: { display: true, text: 'Time' }},
+          y: { title: { display: true, text: 'Speed (m/s)' }, beginAtZero: true }
+        }
+      }
+    });
+
+    function toRad(x) {
+      return x * Math.PI / 180;
+    }
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // meters
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    function onLocationUpdate(position) {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      const now = Date.now();
+
+      let speed = 0;
+
+      if (lastLat !== null && lastLon !== null && lastTime !== null) {
+        const distance = calculateDistance(lastLat, lastLon, lat, lon);
+        const timeElapsed = (now - lastTime) / 1000;
+
+        if (timeElapsed > 0 && distance > 2) { // filter small movement
+          speed = distance / timeElapsed;
+        }
+      }
+
+      const timeStr = new Date(now).toLocaleTimeString();
+
+      // Add to table
+      const newRow = tableBody.insertRow();
+      newRow.insertCell(0).textContent = timeStr;
+      newRow.insertCell(1).textContent = lat.toFixed(6);
+      newRow.insertCell(2).textContent = lon.toFixed(6);
+      newRow.insertCell(3).textContent = speed.toFixed(2);
+
+      tableBody.parentElement.scrollTop = tableBody.parentElement.scrollHeight;
+
+      // Add to graph
+      speedData.labels.push(timeStr);
+      speedData.datasets[0].data.push(speed.toFixed(2));
+      speedChart.update();
+
+      lastLat = lat;
+      lastLon = lon;
+      lastTime = now;
+
+      // Update Map
+      if (!map) {
+        map = L.map('map').setView([lat, lon], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        marker = L.marker([lat, lon]).addTo(map)
+          .bindPopup('You are here 📍').openPopup();
+      } else {
+        marker.setLatLng([lat, lon]);
+        map.setView([lat, lon]);
+      }
+
+      statusEl.textContent = "Tracking location... 📡";
+    }
+
+    function onError(error) {
+      if (error.code === error.TIMEOUT) {
+        statusEl.textContent = "Timeout. Retrying...";
+        console.warn("Timeout expired. Retrying...");
+        stopTracking();
+        startTracking();
+      } else if (error.code === error.PERMISSION_DENIED) {
+        statusEl.textContent = "Permission denied. Please allow GPS access.";
+        alert("Please refresh and allow GPS access!");
+      } else {
+        statusEl.textContent = "Error: " + error.message;
+      }
+    }
+
+    function startTracking() {
+      if (navigator.geolocation) {
+        if (watchID) {
+          navigator.geolocation.clearWatch(watchID);
+        }
+        watchID = navigator.geolocation.watchPosition(
+          onLocationUpdate,
+          onError,
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+        statusEl.textContent = "Requesting location...";
+      } else {
+        statusEl.textContent = "Geolocation not supported.";
+      }
+    }
+
+    function stopTracking() {
+      if (watchID) {
+        navigator.geolocation.clearWatch(watchID);
+        watchID = null;
+        statusEl.textContent = "Tracking stopped. ✋";
+      }
+    }
+
+    function downloadCSV() {
+      let csv = "Time,Latitude,Longitude,Speed (m/s)\n";
+      const rows = tableBody.querySelectorAll('tr');
+      rows.forEach(row => {
+        const cols = row.querySelectorAll('td');
+        const rowData = Array.from(cols).map(td => td.textContent).join(',');
+        csv += rowData + "\n";
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'gps_data.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
